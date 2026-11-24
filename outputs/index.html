@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>森林生长 · 像素加载动画</title>
+<style>
+*{box-sizing:border-box}
+:root{color-scheme:light;--ink:#314b37;--line:#bbc7ae;--paper:#eef0e4}
+body{margin:0;min-height:100svh;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 40%,#f6f6e9,transparent 72%),var(--paper);color:var(--ink);font-family:"Microsoft YaHei",system-ui,sans-serif}
+main{width:min(94%,1020px);padding:42px 0}
+header,.tools,.readout,.buttons{display:flex;align-items:center}
+header{justify-content:space-between;gap:12px;margin:0 3% 24px}
+h1{font:600 clamp(23px,3.3vw,36px)/1.2 "Songti SC",SimSun,serif;letter-spacing:.12em;margin:0}
+#status{font-size:13px;letter-spacing:.08em;display:flex;align-items:center;gap:8px}
+#status:before{content:"";background:#718947;width:6px;height:6px;box-shadow:2px -2px #a6b968}
+.shell{position:relative;padding:5px;border:1px solid #98a489;border-radius:999px;background:#f9f7df;box-shadow:0 2px 0 #bac5ae,0 12px 20px -15px #546541}
+.scene{position:relative;overflow:hidden;border-radius:999px;border:1px solid #a2ae90;background:#c5dfc8}
+canvas{display:block;width:100%;height:auto;image-rendering:pixelated}
+#gardener{position:absolute;background:transparent;border:0;min-width:24px;min-height:28px;width:7%;height:32%;bottom:8%;transform:translateX(-50%);padding:0;cursor:pointer;border-radius:25%}
+:focus-visible{outline:2px solid #82572c;outline-offset:3px}
+.tools{margin:28px 3% 0;gap:24px;flex-wrap:wrap}
+label,.hint{font-size:12px;color:#5f7059}
+.readout{flex:1;gap:14px;min-width:150px}
+output{font:14px Consolas,monospace;min-width:4ch;text-align:right}
+input{width:100%;min-width:44px;accent-color:#4e6d46;cursor:pointer}
+.buttons{gap:8px}
+.buttons button{font:inherit;font-size:13px;line-height:20px;padding:7px 14px;cursor:pointer;border:1px solid var(--line);border-radius:20px;background:#f8f8ed;color:var(--ink)}
+.buttons button:hover{background:#e0e8d5}
+.hint{margin:14px 3% 0}
+@media(max-width:600px){main{width:96%}.tools{gap:10px;margin-top:20px}.buttons button{padding:6px 10px}.readout{gap:4px;min-width:90px}header{margin-bottom:16px}.shell{padding:3px}}
+</style>
+<main>
+<header><h1>森林生长</h1><span id="status" role="status">正在浇水</span></header>
+<div class="shell"><div class="scene">
+<canvas id="forest" width="400" height="100" role="img" aria-label="园丁沿着小路浇水，树木和野花在身后生长"></canvas>
+<button id="gardener" aria-label="让园丁跳一下" title="让园丁跳一下"></button>
+</div></div>
+<div class="tools"><label for="progress">生长进度</label><div class="readout"><input id="progress" type="range" min="0" max="100" value="0"><output for="progress" id="value">0%</output></div>
+<div class="buttons"><button id="play">暂停</button><button id="replay">↻ 重播</button></div></div>
+<p class="hint">拖动查看生长过程，点园丁让他跳一下。</p>
+</main>
+<script src="forest.js"></script>
+</html>

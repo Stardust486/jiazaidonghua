@@ -1,0 +1,11 @@
+# Browser profiles, captures, and other local working files stay private.
+/*
+!/.gitignore
+!/README.md
+!/outputs/
+/outputs/*
+!/outputs/index.html
+!/outputs/forest.js
+!/outputs/starlight.html
+!/outputs/starlight-preview.png
+!/outputs/starlight-twinkle.gif

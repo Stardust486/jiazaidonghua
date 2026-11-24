@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>星迹 · 流星加载动画</title>
+<style>
+*{box-sizing:border-box}
+:root{color-scheme:dark;color:#f4eee2;background:#0e1019;font-family:"Microsoft YaHei",system-ui,sans-serif}
+body{margin:0;min-height:100svh;display:grid;place-items:center;background:radial-gradient(ellipse at 32% 55%,#181b2b,transparent 65%)}
+main{width:min(1080px,92vw);padding:44px 0}
+header,footer,.controls{display:flex;align-items:center}
+header{justify-content:space-between;margin:0 2% 22px}
+h1{font:500 clamp(30px,4vw,48px)/1.2 SimSun,serif;letter-spacing:.16em;margin:0}
+.count{color:#c5c1ba;font-size:13px}.count b,output{font-family:Consolas,monospace;font-variant-numeric:tabular-nums}.count b{color:#ffe3a9;font-size:16px}
+.scene{position:relative;border:1px solid #545465;border-radius:999px;overflow:hidden;background:#0a0a13;box-shadow:0 12px 42px #06071170}
+canvas{display:block;width:100%;height:auto}
+.mist{position:absolute;pointer-events:none;mix-blend-mode:screen;animation:mist-fade 18s ease-in-out infinite}
+@keyframes mist-fade{0%,100%{opacity:.92}50%{opacity:0}}
+#sky{position:relative}
+footer{gap:16px;margin:25px 2% 0}
+label{font-size:13px;color:#c1bfcb}
+input{flex:1;min-width:60px;accent-color:#e8ce92;cursor:pointer}
+.meter{position:absolute;left:50%;top:6%;transform:translateX(-50%);display:flex;align-items:center;gap:.6em;pointer-events:none;color:#ffe5ad;font:500 clamp(16px,2vw,23px)/1 Consolas,monospace;font-variant-numeric:tabular-nums;letter-spacing:.04em;text-shadow:0 0 12px #eeb86770}
+.meter::before,.meter::after{content:"";width:clamp(17px,3vw,35px);height:5px;background:linear-gradient(90deg,transparent,#b89c69);clip-path:polygon(0 40%,80% 40%,89% 0,100% 50%,89% 100%,80% 60%,0 60%)}
+.meter::after{transform:scaleX(-1)}
+.controls{gap:8px}button{border:1px solid #494959;border-radius:24px;padding:8px 17px;background:#1c1d29;color:inherit;font:inherit;font-size:13px;cursor:pointer}button:hover{border-color:#c5aa7d}button:focus-visible,input:focus-visible{outline:2px solid #f9d590;outline-offset:4px}
+@media(max-width:560px){main{width:94vw}header{margin-bottom:15px}footer{gap:8px;flex-wrap:wrap}.controls{margin-left:auto}button{padding:7px 12px}.count{font-size:12px}}
+</style>
+<main>
+<header><h1>星迹</h1><span class="count">已点亮　<b id="lit">0</b> / <span id="total"></span></span></header>
+<div class="scene"><canvas width="1920" height="540" id="sky" role="img" aria-label="流星沿浅波浪穿过缓慢流动的蓝紫色星雾，从左向右点亮星空。越靠近航迹，十字星光越亮。"></canvas><output class="meter" for="seek" id="value" aria-label="飞行进度" aria-live="off">0%</output></div>
+<footer><label for="seek">飞行进度</label><input type="range" id="seek" min="0" max="100" step=".1" value="0">
+<div class="controls"><button id="play">暂停</button><button id="replay">↻ 重播</button></div></footer>
+</main>
+<script>
+'use strict';
+const get = id => document.getElementById(id);
+const ctx = get('sky').getContext('2d');
+ctx.scale(2, 2);
+const width = 960, height = 270, tau = Math.PI * 2;
+const slider = get('seek');
+const bound = n => Math.min(1, Math.max(0, n));
+const hash = n => { const k = Math.sin(n * 51.271 + .42) * 43758.5453; return k - Math.floor(k); };
+// Fixed cloud textures fade independently inside the capsule.
+const noiseTable=Array.from({length:256},(_,i)=>hash(i+812));
+function noise(x,y){
+  const ix=Math.floor(x), iy=Math.floor(y);
+  const fx=x-ix, fy=y-iy, u=fx*fx*(3-2*fx), v=fy*fy*(3-2*fy);
+  const at=(dx,dy)=>noiseTable[(ix+dx+71*(iy+dy))&255];
+  const top=at(0,0)*(1-u)+at(1,0)*u, bottom=at(0,1)*(1-u)+at(1,1)*u;
+  return top*(1-v)+bottom*v;
+}
+function cloud(x,y){
+  return .54*noise(x,y)+.27*noise(2.1*x,2.1*y)+.13*noise(4.3*x,4.3*y)+.06*noise(8.7*x,8.7*y);
+}
+// Bounds in percentages of the capsule, followed by tilt and fade phase in seconds.
+const fogPatches=[
+  [-2,-28,43,85,-.53,-2.4],
+  [66,-24,39,81,.37,-14.5],
+  [17,64,59,60,-.28,-4.8],
+  [-6,66,17,38,.38,-12.3],
+  [87,75,17,32,-.47,-1.2]
+];
+fogPatches.forEach(([left,top,w,h,tilt,delay],index)=>{
+  const layer=document.createElement('canvas');
+  layer.className='mist';layer.setAttribute('aria-hidden','true');
+  layer.width=Math.ceil(width*w/100);layer.height=Math.ceil(height*h/100);
+  Object.assign(layer.style,{left:left+'%',top:top+'%',width:w+'%',height:h+'%',animationDelay:delay+'s'});
+  get('sky').before(layer);
+  const g=layer.getContext('2d');
+
+  const texture=g.createImageData(layer.width,layer.height);
+  const W=texture.width,H=texture.height;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const u=x/W,v=y/H, nx=x/49+index*37, ny=y/44;
+    const warp=cloud(nx*.42+9,ny*.46+3);
+    const body=cloud(nx+warp*1.5,ny+warp*1.8);
+    const dust=cloud(nx*3.8,ny*3.8);
+    const dx=(u-.5)*2, dy=(v-.5-tilt*(u-.5))*2;
+    const rim=bound(1-dx*dx-dy*dy+(warp-.5)*.52);
+    const band=rim*rim*(3-2*rim);
+    const light=bound((body*.71+dust*.29-.30)*2.35);
+    const grain=.70+.30*hash(x+W*y);
+    const k=(y*W+x)*4;
+    const violet=bound((warp-.34)*1.7);
+    texture.data[k]=24+violet*33+light*31;
+    texture.data[k+1]=62+light*85-violet*28;
+    texture.data[k+2]=145+light*65;
+    texture.data[k+3]=145*light**1.4*grain*band;
+  }
+  g.putImageData(texture,0,0);
+});
+function route(t) {
+  const phase = tau * 3.12 * t + .28 * Math.sin(tau*t);
+  return {x:16 + 928*t, y:137 - 26*Math.sin(phase) - 5*t};
+}
+const samples = Array.from({length:1601}, (_,i) => route(i/1600));
+const stars = [];
+const colors = ['#ffd788','#ffdea2','#91d9ff','#bea0ff','#ffa48a'];
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+const columns = 18, rows = 5;
+for(let i=0;i<columns*rows;i++){
+  const x=(i%columns + .06 + .88*hash(i+93))*width/columns;
+  const y=(Math.floor(i/columns) + .06 + .88*hash(i+731))*height/rows;
+  const capX=Math.max(135,Math.min(width-135,x));
+  if(Math.hypot(x-capX,y-135)>126)continue;
+  const distance=Math.sqrt(samples.reduce((d,q)=>Math.min(d,(q.x-x)**2+(q.y-y)**2),Infinity));
+  const strength=.25+.75*Math.exp(-((distance/67)**2));
+  const at=Math.max(.001,Math.min(.99,(x-16)/928));
+  stars.push({x,y,at,strength,size:3.7+hash(i+451)**2*5.8,
+    color:colors[Math.floor(hash(i+399)*colors.length)],
+    phase:tau*hash(i+999),period:18000/(hash(i+627)<.5?4:5)});
+}
+get('total').textContent = stars.length;
+const base = document.createElement('canvas');
+base.width=1920; base.height=540;
+const bg = base.getContext('2d'); bg.scale(2,2);
+for(let i=0;i<1150;i++){
+  const x=hash(i)*width, y=hash(i+3300)*height, r=hash(i+82)>.91?1:.5;
+  bg.fillStyle='rgba(172,170,199,'+(.07+hash(i+92)**4*.28)+')';
+  bg.fillRect(x,y,r,r);
+}
+function cross(x,y,r,color) {
+  ctx.fillStyle=color;ctx.beginPath();
+  ctx.moveTo(x,y-r);ctx.lineTo(x+r*.16,y-r*.16);ctx.lineTo(x+r*.84,y);
+  ctx.lineTo(x+r*.16,y+r*.16);ctx.lineTo(x,y+r);ctx.lineTo(x-r*.16,y+r*.16);
+  ctx.lineTo(x-r*.84,y);ctx.lineTo(x-r*.16,y-r*.16);ctx.closePath();ctx.fill();
+}
+// Broken pigment strokes follow the bends in the flight path.
+const inks=['#245bde','#348bf6','#6670e3','#2364bb','#71d6ef','#ef8247','#ffe28d'];
+function paintTrail(p,ctx){
+  const start=Math.max(0,p-.47), end=Math.floor(p*1600);
+  // Layer a cobalt body and a warm filament beneath the broken brush marks.
+  for(let i=Math.max(0,end-182);i<end;i++){
+    const a=samples[i], b=samples[i+1], distance=(end-i)/182;
+    const fade=1-distance, grain=.82+.18*hash(i);
+    ctx.globalAlpha=fade*.9;
+    ctx.strokeStyle='#357fea';ctx.lineWidth=(2+12*Math.sin(Math.PI*distance))*grain;
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    ctx.globalAlpha=fade*fade;
+    ctx.strokeStyle=distance<.21?'#ffe6a6':'#8dd9fd';ctx.lineWidth=1+3*fade;
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+  }
+  for(let i=Math.ceil(start*1600);i<end;i+=2){
+    const a=samples[i], b=samples[Math.min(i+2,1600)], age=p-i/1600;
+    const fresh=Math.exp(-age*21), spread=1.5+Math.min(1,age*40)*8;
+    for(let j=0;j<8;j++){
+      const id=i*11+j;
+      const offX=(hash(id+71)-.5)*spread*2, offY=(hash(id+150)-.5)*spread*2;
+      ctx.globalAlpha=(.12+.75*fresh)*(1-age/.48)*(.4+hash(id)*.6);
+      ctx.strokeStyle=inks[Math.floor(hash(id+241)*7)];ctx.lineWidth=.35+hash(id+881)*2;
+      ctx.beginPath();ctx.moveTo(a.x+offX,a.y+offY);
+      ctx.lineTo(b.x+(b.x-a.x)*hash(id+193)*2+offX,b.y+(b.y-a.y)*hash(id+193)*2+offY);ctx.stroke();
+    }
+  }
+  ctx.globalAlpha=1;
+}
+const trailLayer=base.cloneNode();
+const trailContext=trailLayer.getContext('2d');
+trailContext.scale(2,2);
+let lastFlightPosition=-1;
+function draw(p,now=performance.now()){
+  if(p!==lastFlightPosition){
+    trailContext.clearRect(0,0,width,height);
+    trailContext.drawImage(base,0,0,width,height);
+    paintTrail(p,trailContext);
+    lastFlightPosition=p;
+  }
+  ctx.clearRect(0,0,width,height);
+  ctx.drawImage(trailLayer,0,0,width,height);
+  let lit=0;
+  for(const s of stars){
+    if(p<s.at){ctx.fillStyle='#555160';ctx.fillRect(s.x,s.y,1.25,1.25);continue;}
+    lit++;
+    const age=p-s.at, grow=bound(age*310), flash=Math.exp(-age*30);
+    const pulse=bound(.43+.94*Math.sin(tau*now/s.period+s.phase));
+    if(pulse===0)continue;
+    const r=1+grow*s.size*(.36+.64*s.strength)*(.96+.45*flash)*(.55+.55*pulse);
+    ctx.globalAlpha=(.17+.83*s.strength)*pulse;
+    ctx.shadowColor=s.color;ctx.shadowBlur=r*1.6;
+    cross(s.x,s.y,r,s.color);ctx.shadowBlur=0;cross(s.x,s.y,r*.32,'#fff8ef');
+    ctx.globalAlpha=1;
+  }
+  const head=route(p);
+  const glow=ctx.createRadialGradient(head.x,head.y,0,head.x,head.y,21);
+  glow.addColorStop(0,'#ffe8a9db');glow.addColorStop(.3,'#ffa05366');glow.addColorStop(1,'#ee704000');
+  ctx.fillStyle=glow;ctx.fillRect(head.x-21,head.y-21,42,42);
+  const cycle=tau*(now%18000)/18000;
+  const scale=1+.1*Math.sin(5*cycle);
+  const tilt=.23+.12*Math.sin(4*cycle);
+  ctx.save();ctx.translate(head.x,head.y);ctx.rotate(tilt);ctx.scale(scale,scale);
+  cross(0,0,13,'#ffe39d');ctx.rotate(.7);cross(0,0,7,'#fff6cb');ctx.restore();
+  get('lit').textContent=lit;
+  slider.value=p*100;get('value').value=Math.floor(p*100)+'%';
+}
+let progress=0, playing=false, previous=0, lastDraw=0;
+function animate(now){
+  if(playing || (progress>0 && now-lastDraw>=45)){
+    if(playing)progress=bound(progress+Math.min(now-previous,80)/18000);
+    draw(progress,now);lastDraw=now;
+    if(playing && progress===1)setPlaying(false);
+  }
+  previous=now;requestAnimationFrame(animate);
+}
+function setPlaying(next){
+  playing=next;get('play').textContent=next?'暂停':'播放';
+  if(next){if(progress===1)progress=0;previous=performance.now();}
+}
+slider.onpointerdown=()=>setPlaying(false);
+slider.oninput=()=>{setPlaying(false);progress=Number(slider.value)/100;draw(progress);};
+get('play').onclick=()=>setPlaying(!playing);
+get('replay').onclick=()=>{progress=0;draw(0);setPlaying(true);};
+draw(0);setPlaying(!reducedMotion.matches);requestAnimationFrame(animate);
+</script>
+</html>
